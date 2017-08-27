@@ -14,7 +14,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-#include "shared.h"
+#include "shared_SHA1.h"
 #include "omp.h"
 
 
@@ -542,16 +542,16 @@ int main(void) {
 	char userInput[55]; //55 is max length as we only support 447 bits = 55.875 bytes
 	fgets(userInput, sizeof(userInput), stdin);
 	
-	int i = strlen(userInput)-1; 
-	printf("String length: %d\n", i);
+	int inputLen = strlen(userInput)-1;
+	printf("String length: %d\n", inputLen);
 	
 	printf("Iterations of SHA: %d\n", NUM_ROUNDS);
 
 
 
-	unsigned char input[i];
-	for(int j = 0; j<i; j++) {
-		input[j] = userInput[j];
+	unsigned char input[inputLen];
+	for(int i = 0; i<inputLen; i++) {
+		input[i] = userInput[i];
 	}
 	
 	clock_t begin = clock(), delta, deltaA;
@@ -582,15 +582,15 @@ int main(void) {
 
 	//Sharing secrets
 	clock_t beginSS = clock(), deltaSS;
-	unsigned char shares[NUM_ROUNDS][3][i];
-	if(RAND_bytes(shares, NUM_ROUNDS*3*i) != 1) {
+	unsigned char shares[NUM_ROUNDS][3][inputLen];
+	if(RAND_bytes(shares, NUM_ROUNDS*3*inputLen) != 1) {
 		printf("RAND_bytes failed crypto, aborting\n");
 		return 0;
 	}
 	#pragma omp parallel for
 	for(int k=0; k<NUM_ROUNDS; k++) {
 
-		for (int j = 0; j < i; j++) {
+		for (int j = 0; j < inputLen; j++) {
 			shares[k][2][j] = input[j] ^ shares[k][0][j] ^ shares[k][1][j];
 		}
 
@@ -617,7 +617,7 @@ int main(void) {
 	clock_t beginSha = clock(), deltaSha;
 	#pragma omp parallel for
 	for(int k=0; k<NUM_ROUNDS; k++) {
-		as[k] = commit(i, shares[k], randomness[k], rs[k], localViews[k]);
+		as[k] = commit(inputLen, shares[k], randomness[k], rs[k], localViews[k]);
 		for(int j=0; j<3; j++) {
 			free(randomness[k][j]);
 		}
@@ -673,7 +673,7 @@ int main(void) {
 	clock_t beginWrite = clock();
 	FILE *file;
 
-	char outputFile[3*sizeof(int) + 8];
+	char outputFile[20];
 	sprintf(outputFile, "out%i.bin", NUM_ROUNDS);
 	file = fopen(outputFile, "wb");
 	if (!file) {
@@ -712,7 +712,7 @@ int main(void) {
 	printf("Writing file: %ju\n", (uintmax_t)inMilliWrite);
 	printf("Total: %d\n",inMilli);
 	printf("\n");
-	printf("Proof output to file %s", outputFile);
+	printf("Proof output to file %s\n", outputFile);
 
 	openmp_thread_cleanup();
 	cleanup_EVP();

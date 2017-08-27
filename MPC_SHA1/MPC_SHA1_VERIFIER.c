@@ -13,7 +13,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-#include "shared.h"
+#include "shared_SHA1.h"
 
 
 void printbits(uint32_t n) {
@@ -39,7 +39,7 @@ int main(void) {
 	z zs[NUM_ROUNDS];
 	FILE *file;
 
-	char outputFile[3*sizeof(int) + 8];
+	char outputFile[20];
 	sprintf(outputFile, "out%i.bin", NUM_ROUNDS);
 	file = fopen(outputFile, "rb");
 	if (!file) {
@@ -54,7 +54,7 @@ int main(void) {
 	reconstruct(as[0].yp[0],as[0].yp[1],as[0].yp[2],y);
 	printf("Proof for hash: ");
 	for(int i=0;i<8;i++) {
-		printf("%02X", y[i]);
+		printf("%02X-", y[i]);
 	}
 	printf("\n");
 
