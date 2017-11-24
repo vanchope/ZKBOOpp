@@ -28,7 +28,7 @@ set(ZKBOOpp_LIB zkboopp)
 
 include_directories("${PROJECT_SOURCE_DIR}/inc")
 
-add_library(${ZKBOOpp_LIB} SHARED src/MpcVariable.cpp src/mpc_core.cpp src/test_utility.cpp)
+add_library(${ZKBOOpp_LIB} SHARED src/MpcVariable.cpp src/mpc_types.cpp src/mpc_core.cpp src/zkbpp_core.cpp src/test_utility.cpp)
 target_link_libraries(${ZKBOOpp_LIB} ${LIBS})
 
 function(build_executable_cpp cppfile)  

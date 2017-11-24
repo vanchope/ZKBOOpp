@@ -16,26 +16,6 @@
 #include "Matrix.h"
 
 
-void dump_memory(const char * data, int len);
-
-template <typename T>
-void debug_func(const char * func_name,
-		const char * input, int len_bytes,
-		const char * inputpub, int inputpub_len_bytes,
-		const T * y, int len_output){
-	printf("%s('", func_name);
-	for(int i=0; i<len_bytes; i++){
-		printf("%c", input[i]);
-	}
-	printf("')=");
-	//TODO print also pub params
-	const char * out = (const char * ) y;
-	unsigned int output_bytes = len_output * sizeof(T);
-	dump_memory(out, output_bytes);
-	printf("\n");
-}
-
-
 
 //  String format of the proof-commitment:
 //
@@ -44,10 +24,10 @@ void debug_func(const char * func_name,
 //  [NUMBER_OF_ROUNDS * 3 * SHA256_DIGEST_LEN]  # hash
 //
 template <typename T>   // output type, e.g. uint32_t
-std::string convert_proof_commitment_to_string(int input_bytes, int output_len_bytes,
-		//const T yp[][ZKBOO_NUMBER_OF_ROUNDS][3] /*IN*/ /*first dimention is output_in_words*/,
+std::string zkboo_convert_proof_commitment_to_string(int input_bytes, int output_len_bytes,
+		//const T yp[][ZKBOO_NUMBER_OF_ROUNDS][3] /*IN*/ /*first dimension is output_in_words*/,
 		const T yp[], // it is a contiguous memory region
-		unsigned char hash[ZKBOO_NUMBER_OF_ROUNDS][3][SHA256_DIGEST_LENGTH]){
+		unsigned char hash[ZKBOO_NUMBER_OF_ROUNDS][3][ZKBOO_COMMITMENT_VIEW_LENGTH]){
 	std::vector<std::string> vector_res;
 	// 1. Header =  8-bytes string for input and output sizes in bytes
 	uint8_t header[sizeof(uint32_t) * 2];
@@ -63,26 +43,29 @@ std::string convert_proof_commitment_to_string(int input_bytes, int output_len_b
 	vector_res.push_back(yp_str); // [1]
 
 	// 3. hash
-	std::string hash_str((char *) hash, ZKBOO_NUMBER_OF_ROUNDS * 3 * SHA256_DIGEST_LENGTH);
+	std::string hash_str((char *) hash, ZKBOO_NUMBER_OF_ROUNDS * 3 * ZKBOO_COMMITMENT_VIEW_LENGTH);
 	vector_res.push_back(hash_str); // [2]
 
 	std::string res = vectorstrings_to_string(vector_res);
 	return res;
 }
 
+
+std::string zkboo_update_proof_commitment_string(const std::string &proof_commit, const unsigned char hash[ZKBOO_HASH_BYTES]);
+
 //  String format of the proof-response:
 //
 //  [NUMBER_OF_ROUNDS * 2 of MpcPartyView]      # MpcPartyView[]
-std::string convert_proof_response_to_string(const MpcProof z[]);
+std::string zkboo_convert_proof_response_to_string(const MpcProof z[]);
 
 
 template <typename T>   // output type, e.g. uint32_t
-void convert_string_to_proof(
+void zkboo_convert_string_to_proof(
 			const std::vector<std::string> &proof_commit,
 			const std::vector<std::string> &proof_vs,
 			int output_words,
 		const mpc::Matrix3D<T> &yp /*OUT*/, // equiv. of [][ZKBOO_NUMBER_OF_ROUNDS][3], where first dimension is output_in_words extracted from the proof
-		unsigned char hash[ZKBOO_NUMBER_OF_ROUNDS][3][SHA256_DIGEST_LENGTH] /*OUT*/,
+		unsigned char hash[ZKBOO_NUMBER_OF_ROUNDS][3][ZKBOO_COMMITMENT_VIEW_LENGTH] /*OUT*/,
 		MpcProof z[] /*OUT*/){
 
 	const char * data = proof_commit[1].data();
@@ -95,10 +78,15 @@ void convert_string_to_proof(
 	for(int i=0; i<ZKBOO_NUMBER_OF_ROUNDS; i++){
 		for(int j=0; j<2; j++){
 			assert(index < proof_vs.size());
-			z[i].pView[j] = string_to_MpcPartyView(proof_vs[index++]);
+			//z[i].pView[j] = string_to_MpcPartyView(proof_vs[index++]);
+			z[i].pView[j] = string_to_MpcPartyView(proof_vs[index], proof_vs[index+1]);
+			index+=2;
 		}
 	}
 }
+
+// splits x to 3 random parts that XOR to the original value
+void zkboo_convert_input(MpcVariable<uint8_t>& x, const uint8_t &secret_input, const MpcPartyContext *context[3]);
 
 
 template <typename T>   // output type, e.g. uint32_t
@@ -118,7 +106,7 @@ std::string zkboo_prove_commit(
 	// output per each party
 	mpc::Matrix3D<T> yp(output_in_words, ZKBOO_NUMBER_OF_ROUNDS, 3); // default initialize to 0
 
-	unsigned char hashView[ZKBOO_NUMBER_OF_ROUNDS][3][SHA256_DIGEST_LENGTH]; // commitment to each virtual mpc party computation
+	unsigned char hashView[ZKBOO_NUMBER_OF_ROUNDS][3][ZKBOO_COMMITMENT_VIEW_LENGTH]; // commitment to each virtual mpc party computation
 
 	for(int iRound=0; iRound<ZKBOO_NUMBER_OF_ROUNDS; iRound++){
 		MpcPartyContext ctxArray[3];
@@ -130,7 +118,7 @@ std::string zkboo_prove_commit(
 			InitMpcContext(ctx[ip], random_tape_len_in_bytes, false);
 		}
 		for(int ilen=0; ilen<input_bytes; ilen++){
-			convert_input(input_mpc[ilen], input[ilen], (const MpcPartyContext**)ctx); // input is split into 3 random parts
+			zkboo_convert_input(input_mpc[ilen], input[ilen], (const MpcPartyContext**)ctx); // input is split into 3 random parts
 			for(int ip=0; ip<3; ip++){
 				ctx[ip]->view.input.push_back(input_mpc[ilen].value(ip));
 			}
@@ -163,8 +151,8 @@ std::string zkboo_prove_commit(
 
 		// store all views into vector z
 		for(int iParty=0; iParty<3; iParty++){
-			std::string view_str = MpcPartyView_to_string(ctx[iParty]->view);
-			zkboo_proof_3parts.push_back(view_str);
+			std::vector<std::string> view_str = MpcPartyView_to_string(ctx[iParty]->view);
+			zkboo_proof_3parts.insert(zkboo_proof_3parts.end(), view_str.begin(), view_str.end());
 		}
 
 		delete[] res;
@@ -184,7 +172,7 @@ std::string zkboo_prove_commit(
 	}
 	//debug_func(function_name, input, input_bytes, (char*)inputpub, inputpub_len_bytes, y, output_in_words);
 
-	std::string proof_com = convert_proof_commitment_to_string(input_bytes, output_len_bytes, yp.data, hashView);
+	std::string proof_com = zkboo_convert_proof_commitment_to_string(input_bytes, output_len_bytes, yp.data, hashView);
 	delete[] y;
 	return proof_com;
 }
@@ -211,7 +199,7 @@ std::string zkboo_fake_prove(
 
 	T* y = (T*) output;
 	mpc::Matrix3D<T> yp(output_in_words, ZKBOO_NUMBER_OF_ROUNDS, 3); // output per each party
-	unsigned char hashView[ZKBOO_NUMBER_OF_ROUNDS][3][SHA256_DIGEST_LENGTH]; // commitment to each virtual mpc party computation
+	unsigned char hashView[ZKBOO_NUMBER_OF_ROUNDS][3][ZKBOO_COMMITMENT_VIEW_LENGTH]; // commitment to each virtual mpc party computation
 
 	//FIXME T instead of uint32_t?
 	mpc::Matrix2D<uint32_t> fake_randomness(ZKBOO_NUMBER_OF_ROUNDS, 1 + (random_tape_len_in_bytes / sizeof(uint32_t)));
@@ -265,13 +253,13 @@ std::string zkboo_fake_prove(
 
 			/*
 			printf("C++ | Committing in fake proof ZKBoo: ");
-			dump_memory((const char *)(unsigned char*) &hashView[iRound][(es[iRound] + ip) % 3], SHA256_DIGEST_LENGTH);
+			dump_memory((const char *)(unsigned char*) &hashView[iRound][(es[iRound] + ip) % 3], ZKBOO_COMMITMENT_VIEW_LENGTH);
 			printf(" with randomness: ");
 			dump_memory((const char *) &ctx[iRound][ip]->view.rnd_tape_seed, 16);
 			printf("\n");
 			*/
 		}
-		generate_random((unsigned char*) &hashView[iRound][(es[iRound] + 2) % 3], SHA256_DIGEST_LENGTH);
+		generate_random((unsigned char*) &hashView[iRound][(es[iRound] + 2) % 3], ZKBOO_COMMITMENT_VIEW_LENGTH);
 		delete[] res;
 	}
 	printf("used randomness elements: %d\n",  ctx[0][0]->randomnessUsed);
@@ -279,19 +267,21 @@ std::string zkboo_fake_prove(
 	// store all views into vector z
 	for(int iRound=0; iRound<ZKBOO_NUMBER_OF_ROUNDS; iRound++){
 		for(int iParty=0; iParty<2; iParty++){
-			std::string view_str = MpcPartyView_to_string(ctx[iRound][iParty]->view);
-			zkboo_proof_2parts.push_back(view_str);
+			std::vector<std::string> view_str = MpcPartyView_to_string(ctx[iRound][iParty]->view);
+			zkboo_proof_2parts.insert(zkboo_proof_2parts.end(),view_str.begin(), view_str.end());
 		}
 	}
 
-	std::string proof_com = convert_proof_commitment_to_string(input_bytes, output_len_bytes, yp.data, hashView);
+	std::string proof_com = zkboo_convert_proof_commitment_to_string(input_bytes, output_len_bytes, yp.data, hashView);
 	return proof_com;
 }
 
 
+// returns proof_commit  (Y) or empty string (N), where (Y/N) is the result of verify algorithm
 template <typename T>   // output type, e.g. uint32_t
-bool zkboo_verify(const char * function_name,
+std::string zkboo_verify(const char * function_name,
 		const unsigned char hash_v[ZKBOO_HASH_BYTES],
+		int input_bytes,
 		const char * inputpub, int inputpub_len_bytes,
 		const char * output, int output_len_bytes,
 		int random_tape_len_in_bytes,
@@ -300,6 +290,7 @@ bool zkboo_verify(const char * function_name,
 				MpcVariableVerify<T>* z, int output_in_words),
 		const std::string& proof_commit /*IN*/,
 		const std::vector<std::string> &z_str /*IN*/){
+	std::string res;
 
 	std::vector<std::string> proof_commit_vs = string_to_vectorstrings(proof_commit);
 	std::string header_str = proof_commit_vs[0];
@@ -308,9 +299,9 @@ bool zkboo_verify(const char * function_name,
 
 	int output_in_words = *outputsize_ptr / sizeof(T);
 	mpc::Matrix3D<T> yp(output_in_words, ZKBOO_NUMBER_OF_ROUNDS, 3);
-	unsigned char hashViews[ZKBOO_NUMBER_OF_ROUNDS][3][SHA256_DIGEST_LENGTH];
+	unsigned char hashViews[ZKBOO_NUMBER_OF_ROUNDS][3][ZKBOO_COMMITMENT_VIEW_LENGTH];
 	MpcProof zp[ZKBOO_NUMBER_OF_ROUNDS];
-	convert_string_to_proof(proof_commit_vs, z_str, output_in_words, yp, hashViews, zp);
+	zkboo_convert_string_to_proof(proof_commit_vs, z_str, output_in_words, yp, hashViews, zp);
 
 	T* expected_output = (T*) output;
 	for(int offset=0; offset<output_in_words; offset++){
@@ -319,7 +310,7 @@ bool zkboo_verify(const char * function_name,
 			T y_received = yp.data[off3d] ^ yp.data[off3d+1] ^ yp.data[off3d+2]; //equiv. to yp[offset][i][0] ^ yp[offset][i][1] ^ yp[offset][i][2];
 			if (y_received != *(expected_output+offset)){
 				//printf("C++ | expected output does not match the received. verify returns false\n"); //FIXME connect with view32/64
-				return false;
+				return res; // empty
 			}
 		}
 	}
@@ -335,12 +326,12 @@ bool zkboo_verify(const char * function_name,
 
 	MpcPartyContext ctxArray[ZKBOO_NUMBER_OF_ROUNDS][2];
 	MpcPartyContext* ctx[ZKBOO_NUMBER_OF_ROUNDS][2];
-	int input_words = zp[0].pView[0].input.size();
-	assert (input_words >= 0);
+
 	bool verification_ok = true;
 	try{
 		for(int iRound=0; iRound < ZKBOO_NUMBER_OF_ROUNDS; iRound++){
 			for(int i=0; i<2; i++){
+				assert((unsigned int)input_bytes == zp[iRound].pView[i].input.size());
 				ctx[iRound][i] = &ctxArray[iRound][i];
 				//prepare context
 				InitMpcContext(ctx[iRound][i], zp[iRound].pView[i].rnd_tape_seed, random_tape_len_in_bytes, true);
@@ -349,10 +340,10 @@ bool zkboo_verify(const char * function_name,
 				ctx[iRound][i]->verifier_counter64 = 0;
 			}
 			// prepare MpcVariableVerify
-			MpcVariableVerify<uint8_t> input_v[input_words];
+			MpcVariableVerify<uint8_t> input_v[input_bytes];
 			MpcVariableVerify<T>* res_v = new MpcVariableVerify<T>[output_in_words];
 
-			for(int iw=0; iw<input_words; iw++){
+			for(int iw=0; iw<input_bytes; iw++){
 				uint8_t xp[2];
 				for(int i=0; i<2; i++){
 					xp[i] = ctx[iRound][i]->view.input[iw];
@@ -360,7 +351,7 @@ bool zkboo_verify(const char * function_name,
 				input_v[iw] = MpcVariableVerify<uint8_t>(xp, (const MpcPartyContext**)ctx[iRound]);
 			}
 
-			(*func_verif)(input_v, input_words, (uint8_t*)inputpub, inputpub_len_bytes, res_v, output_in_words); // +-+-+-+-+
+			(*func_verif)(input_v, input_bytes, (uint8_t*)inputpub, inputpub_len_bytes, res_v, output_in_words); // +-+-+-+-+
 			// the fact that the function did not throw any exception at this point means that
 			// the output part of ctx[0].view was correctly verified
 
@@ -381,14 +372,14 @@ bool zkboo_verify(const char * function_name,
 			}
 
 			//verify that MpcContext hash commitment was computed correctly and matches the challenge value
-			unsigned char hash_ctx_v[SHA256_DIGEST_LENGTH];
+			unsigned char hash_ctx_v[ZKBOO_COMMITMENT_VIEW_LENGTH];
 			assert (ctx[iRound][0]->view.output32.size() == ctx[iRound][0]->verifier_counter32);
 			assert (ctx[iRound][0]->view.output64.size() == ctx[iRound][0]->verifier_counter64);
 			CommitMpcContext(hash_ctx_v, ctx[iRound][0]);
 
 			/*
 			printf("C++ | Committing in verify proof ZKBoo: ");
-				dump_memory((const char *) hash_ctx_v, SHA256_DIGEST_LENGTH);
+				dump_memory((const char *) hash_ctx_v, ZKBOO_COMMITMENT_VIEW_LENGTH);
 				printf(" with randomness: ");
 				dump_memory((const char *) ctx[iRound][0]->view.rnd_tape_seed, 16);
 			printf("\n");
@@ -396,13 +387,13 @@ bool zkboo_verify(const char * function_name,
 
 			/*
 			printf("C++ | Hashes in ZKBoo do not match! Expected ");
-				dump_memory((const char *)&(hashViews[iRound][es[iRound]][0]), SHA256_DIGEST_LENGTH);
+				dump_memory((const char *)&(hashViews[iRound][es[iRound]][0]), ZKBOO_COMMITMENT_VIEW_LENGTH);
 				printf(", but received ");
-				dump_memory((const char *)hash_ctx_v, SHA256_DIGEST_LENGTH);
+				dump_memory((const char *)hash_ctx_v, ZKBOO_COMMITMENT_VIEW_LENGTH);
 			printf("\n");
 			*/
 
-			if (memcmp(&(hashViews[iRound][es[iRound]][0]), hash_ctx_v, SHA256_DIGEST_LENGTH) != 0){
+			if (memcmp(&(hashViews[iRound][es[iRound]][0]), hash_ctx_v, ZKBOO_COMMITMENT_VIEW_LENGTH) != 0){
 				assert(false);
 			}
 
@@ -421,7 +412,12 @@ bool zkboo_verify(const char * function_name,
 		std::cout << "verification failed : " << e.what() << std::endl;
 	}
 	delete[] y;
-	return verification_ok;
+	return verification_ok? proof_commit: res;
 }
 
+
+//FIXME move out input_len_bytes?
+std::string zkboo_extract_input_as_binary(const std::string &proof_view_part1, int input_len_bytes);
+
 #endif /* INC_MPC_CORE_H_ */
+

@@ -157,7 +157,7 @@ const MpcVariableVerify<T> MpcVariableVerify<T>::operator~() const{
 }
 
 //template <typename T>
-uint32_t __nextRandom32(MpcPartyContext* ctx){
+uint32_t nextRandom32_fromCtx(MpcPartyContext* ctx){
 	if (ctx->randomness.size()<= ctx->randomnessUsed){
 		std::stringstream sstr;
 		sstr << "not enough randomness pre-generated : " << ctx->randomness.size() * 4 << " bytes"<< std::endl;
@@ -171,13 +171,13 @@ uint32_t __nextRandom32(MpcPartyContext* ctx){
 
 template <typename T>
 uint32_t MpcVariable<T>::nextRandom32(int i /* 0 to 2 */){
-	return __nextRandom32(ctx[i]);
+	return nextRandom32_fromCtx(ctx[i]);
 }
 
 template <typename T>
 uint32_t MpcVariableVerify<T>::nextRandom32(int i /* 0 to 1; 2 is used for fake randomness in the non-verify mode */){
 	if (i<2)
-		return __nextRandom32(ctx[i]);
+		return nextRandom32_fromCtx(ctx[i]);
 	return 0;
 }
 
@@ -258,10 +258,19 @@ MpcVariableVerify<T>& MpcVariableVerify<T>::operator&=(const MpcVariableVerify& 
 			}
 		}
 	}else{
+//		bool reconstruct_required = ctx[0]->view.output32.size() != ctx[1]->view.output32.size()
+//				|| ctx[0]->view.output64.size() == ctx[1]->view.output64.size();
+		bool reconstruct_required = zkbpp_is_reconstruct_required((const MpcPartyContext**)ctx);
+
 		if (sizeof(T)==4){
-			if (t != ctx[0]->view.output32[ctx[0]->verifier_counter32]){
-				throw std::runtime_error("verification &= failed");
+			if (!reconstruct_required){
+				if (t != ctx[0]->view.output32[ctx[0]->verifier_counter32]){
+					throw std::runtime_error("verification &= failed");
+				}
+			}else{ //zkbpp, Opt.6
+				ctx[0]->view.output32.push_back(t);
 			}
+
 
 			val[0] = t;
 			val[1] = ctx[1]->view.output32[ctx[1]->verifier_counter32];
@@ -269,8 +278,12 @@ MpcVariableVerify<T>& MpcVariableVerify<T>::operator&=(const MpcVariableVerify& 
 				ctx[i]->verifier_counter32 += 1;
 			}
 		}else if (sizeof(T)==8){
-			if (t != ctx[0]->view.output64[ctx[0]->verifier_counter64]){
-				throw std::runtime_error("verification &= failed");
+			if (!reconstruct_required){
+				if (t != ctx[0]->view.output64[ctx[0]->verifier_counter64]){
+					throw std::runtime_error("verification &= failed");
+				}
+			}else{ //zkbpp, Opt.6
+				ctx[0]->view.output64.push_back(t);
 			}
 
 			val[0] = t;
@@ -388,12 +401,20 @@ MpcVariableVerify<T>& MpcVariableVerify<T>::operator+=(const MpcVariableVerify& 
 			}
 		}
 	}else{  // verify mode
+//		bool reconstruct_required = ctx[0]->view.output32.size() != ctx[1]->view.output32.size()
+//				|| ctx[0]->view.output64.size() == ctx[1]->view.output64.size();
+		bool reconstruct_required = zkbpp_is_reconstruct_required((const MpcPartyContext**)ctx);
+
 		for(int j=0; j<2; j++){
 			if (sizeof(T)==4){
-				c[j] = ctx[j]->view.output32[ctx[j]->verifier_counter32];
+				if (!reconstruct_required || j!=0){
+					c[j] = ctx[j]->view.output32[ctx[j]->verifier_counter32];
+				}
 				ctx[j]->verifier_counter32 += 1;
 			}else if (sizeof(T)==8){
-				c[j] = ctx[j]->view.output64[ctx[j]->verifier_counter64];
+				if (!reconstruct_required || j!=0){
+					c[j] = ctx[j]->view.output64[ctx[j]->verifier_counter64];
+				}
 				ctx[j]->verifier_counter64 += 1;
 			}else{
 				throw std::runtime_error("not supported");
@@ -405,8 +426,22 @@ MpcVariableVerify<T>& MpcVariableVerify<T>::operator+=(const MpcVariableVerify& 
 				b[j]=GETBIT(that.val[j]^c[j], i);
 			}
 			t = (a[0]&b[1]) ^ (a[1]&b[0]) ^ GETBIT(r[1],i);
-			if(GETBIT(c[0],i+1) != (t ^ (a[0]&b[0]) ^ GETBIT(c[0],i) ^ GETBIT(r[0],i))) {
-				throw std::runtime_error("verification += failed");
+			if (!reconstruct_required){ //zkboo
+				if(GETBIT(c[0],i+1) != (t ^ (a[0]&b[0]) ^ GETBIT(c[0],i) ^ GETBIT(r[0],i))) {
+					throw std::runtime_error("verification += failed");
+				}
+			}else{ //zkbpp, Opt.6
+				SETBIT(c[0],i+1, t ^ (a[0]&b[0]) ^ GETBIT(c[0],i) ^ GETBIT(r[0],i), T);
+			}
+		}
+
+		if (reconstruct_required){
+			if (sizeof(T)==4){
+				ctx[0]->view.output32.push_back(c[0]);
+			}else if (sizeof(T)==8){
+				ctx[0]->view.output64.push_back(c[0]);
+			}else{
+				throw std::runtime_error("not supported");
 			}
 		}
 
@@ -450,22 +485,7 @@ MpcVariableVerify<T>& MpcVariableVerify<T>::operator|=(const MpcVariableVerify& 
 	return *this;
 }
 
-// --------------------------------------
 
-void generate_random(unsigned char data[], int length_bytes){
-	if(RAND_bytes((unsigned char *)data, length_bytes) != 1){
-		printf("RAND_bytes failed, aborting\n");
-		exit(EXIT_FAILURE);
-	}
-}
-
-//FIXME bulk convert to save the number of calls to RAND_bytes
-void convert_input(MpcVariable<uint8_t>& x, const uint8_t &secret_input, const MpcPartyContext *context[3]){
-	uint8_t shares[3];
-	generate_random((unsigned char *)shares, 2*sizeof(uint8_t));
-	shares[2] = secret_input ^ shares[0] ^ shares[1];
-	x = MpcVariable<uint8_t>(shares, context);
-}
 
 
 // --------------------------------------------------
@@ -527,13 +547,6 @@ void getAllRandomness(
 	EVP_CIPHER_CTX_cleanup(&ctx);
 }
 
-void genRandom(unsigned char *keys, int size){
-	if(RAND_bytes((unsigned char *)keys, size) != 1){
-		printf("RAND_bytes failed crypto, aborting\n");
-		exit(EXIT_FAILURE);
-	}
-}
-
 // generates random tape based on keys
 //template <typename T>
 void InitMpcContext(MpcPartyContext *ctx, const unsigned char keys[16], int randomTapeBytes, bool verify_mode){
@@ -548,12 +561,12 @@ void InitMpcContext(MpcPartyContext *ctx, const unsigned char keys[16], int rand
 // generates random keys
 //template <typename T>
 void InitMpcContext(MpcPartyContext *ctx, int randomTapeBytes, bool verify_mode){
-	genRandom(ctx->view.rnd_tape_seed, 16);
+	generate_random(ctx->view.rnd_tape_seed, 16);
 	InitMpcContext(ctx, ctx->view.rnd_tape_seed, randomTapeBytes, verify_mode);
 }
 
 // commit keys and view
-void CommitMpcContext(unsigned char h[SHA256_DIGEST_LENGTH] /*OUT*/, MpcPartyContext* mpcCtx /*IN*/){
+void CommitMpcContext(unsigned char h[ZKBOO_COMMITMENT_VIEW_LENGTH] /*OUT*/, MpcPartyContext* mpcCtx /*IN*/){
 	SHA256_CTX ctx;
 	SHA256_Init(&ctx);
 	SHA256_Update(&ctx, &(mpcCtx->view.rnd_tape_seed), 16);
@@ -563,17 +576,9 @@ void CommitMpcContext(unsigned char h[SHA256_DIGEST_LENGTH] /*OUT*/, MpcPartyCon
 	SHA256_Final(h, &ctx);
 }
 
-// ROM
-void GenChallengeROM_from_single_proof(unsigned char hash[SHA256_DIGEST_LENGTH] /*OUT*/,
-		const std::string &proof_commitment){
-	SHA256_CTX ctx;
-	SHA256_Init(&ctx);
-	SHA256_Update(&ctx, proof_commitment.data(), proof_commitment.size());
-	SHA256_Final(hash, &ctx);
-}
 
 
-void extract_es_from_Challenge(int * es /*OUT*/,
+void extract_es_from_Challenge(int * es /*OUT, elements are 0,1,or 2*/,
 		const unsigned char hash[ZKBOO_HASH_BYTES] /*IN*/){
 
 	// We do it in base 3. For 136 rounds we need 216<256 bits.
@@ -652,96 +657,119 @@ void dump_MpcPartyView(const MpcPartyView &mpcPartyView){
 }
 
 
-int get_MpcPartyView_input_offset(){
-	return 16 /*sizeof(rnd_tape_seed)*/ + 3 * sizeof(uint32_t);
-}
-
 // return type is string to make it compatible with python
 //
-// layout is the following:
-// [16:random seed] [4:len_input_bytes] [4:len_output_bytes] [4:len_output64_bytes]   # header part
-// [input] [output] [output64]   # data part
-std::string MpcPartyView_to_string(const MpcPartyView &mpcPartyView){
+// layout is the following: two strings
+//  1. [16:random seed] [4:len_input_bytes] [4:len_output_bytes] [4:len_output64_bytes]   # header part
+// 	   [input]              # data input part
+//  2. [output] [output64]   # data output part
+std::vector<std::string> MpcPartyView_to_string(const MpcPartyView &mpcPartyView){
+	std::vector<std::string> res;
 
 	//dump_MpcPartyView(mpcPartyView);
 
-	int total_len = 0;
-	total_len += sizeof(mpcPartyView.rnd_tape_seed); //randomness part
-	total_len += sizeof(uint32_t) * 3; // encode length
+	//part 1
+	{	// [16:rnd_seed][4:inplen][:input]
+		int total_len_part1 = 0;
+		total_len_part1 += sizeof(mpcPartyView.rnd_tape_seed); //randomness part
 
-	uint32_t input_size_bytes = mpcPartyView.input.size() * sizeof(uint8_t);
-	total_len += input_size_bytes;
 
-	uint32_t output32_size_bytes = mpcPartyView.output32.size() * sizeof(uint32_t);
-	total_len += output32_size_bytes;
+		uint32_t input_size_bytes = mpcPartyView.input.size() * sizeof(uint8_t);
+		total_len_part1 += input_size_bytes;
+		total_len_part1 += sizeof(uint32_t); // encode length
 
-	uint32_t output64_size_bytes = mpcPartyView.output64.size() * sizeof(uint64_t);
-	total_len += output64_size_bytes;
+		char * data_part1 = new char[total_len_part1];
+		int offset_part1 = 0;
+		memcpy(data_part1 + offset_part1, mpcPartyView.rnd_tape_seed, sizeof(mpcPartyView.rnd_tape_seed));
+		offset_part1 += sizeof(mpcPartyView.rnd_tape_seed);
 
-	char * data = new char[total_len];
-	int offset = 0;
+		*(uint32_t*)(data_part1 + offset_part1) = input_size_bytes;
+		offset_part1 += sizeof(uint32_t);
 
-	memcpy(data + offset, mpcPartyView.rnd_tape_seed, sizeof(mpcPartyView.rnd_tape_seed));
-	offset += sizeof(mpcPartyView.rnd_tape_seed);
+		memcpy(&data_part1[offset_part1], &(mpcPartyView.input[0]), input_size_bytes);
+		offset_part1 += input_size_bytes;
+		res.push_back(std::string(data_part1, total_len_part1));
+		delete[] data_part1;
+	}
 
-	*(uint32_t*)(data + offset) = input_size_bytes;
-	offset += sizeof(uint32_t);
 
-	*(uint32_t*)(data + offset) = mpcPartyView.output32.size();
-	offset += sizeof(uint32_t);
+	// part 2
+	{   //[4:size32][4:size64][:out32][:out64]
+		int total_len_part2 = 0;
 
-	*(uint32_t*)(data + offset) = mpcPartyView.output64.size();
-	offset += sizeof(uint32_t);
+		uint32_t output32_size_bytes = mpcPartyView.output32.size() * sizeof(uint32_t);
+		total_len_part2 += sizeof(uint32_t); // encode length
+		total_len_part2 += output32_size_bytes;
 
-	memcpy(&data[offset], &(mpcPartyView.input[0]), input_size_bytes);
-	offset += input_size_bytes;
+		uint32_t output64_size_bytes = mpcPartyView.output64.size() * sizeof(uint64_t);
+		total_len_part2 += sizeof(uint32_t); // encode length
+		total_len_part2 += output64_size_bytes;
 
-	memcpy(&data[offset], &(mpcPartyView.output32[0]), output32_size_bytes);
-	offset += output32_size_bytes;
+		char * data_part2 = new char[total_len_part2];
+		int offset_part2 = 0;
 
-	memcpy(&data[offset], &(mpcPartyView.output64[0]), output64_size_bytes);
-	offset += output64_size_bytes;
+		*(uint32_t*)(data_part2 + offset_part2) = mpcPartyView.output32.size();
+		offset_part2 += sizeof(uint32_t);
 
-	assert(offset == total_len);
+		*(uint32_t*)(data_part2 + offset_part2) = mpcPartyView.output64.size();
+		offset_part2 += sizeof(uint32_t);
 
-	std::string res = std::string(data, total_len);
-	delete[] data;
+		memcpy(&data_part2[offset_part2], &(mpcPartyView.output32[0]), output32_size_bytes);
+		offset_part2 += output32_size_bytes;
+
+		memcpy(&data_part2[offset_part2], &(mpcPartyView.output64[0]), output64_size_bytes);
+		offset_part2 += output64_size_bytes;
+
+		assert(offset_part2 == total_len_part2);
+		res.push_back(std::string(data_part2, total_len_part2));
+		delete[] data_part2;
+	}
 	return res;
 }
 
 
-MpcPartyView string_to_MpcPartyView(const std::string &mpcPartyView_str){
+MpcPartyView string_to_MpcPartyView(const std::string &mpcPartyView_part1_str, const std::string &mpcPartyView_part2_str){
 	MpcPartyView mpcPartyView;
-	uint32_t offset = 0;
-	uint32_t rnd_size = sizeof(mpcPartyView.rnd_tape_seed);
+	//part 1
+	{
+		const char * raw_data_part1_ptr = &(mpcPartyView_part1_str.data()[0]);
+		uint32_t offset_part1 = 0;
 
-	const char * raw_data_ptr = &(mpcPartyView_str.data()[0]);
+		uint32_t rnd_size = sizeof(mpcPartyView.rnd_tape_seed);
+		memcpy(mpcPartyView.rnd_tape_seed, raw_data_part1_ptr + offset_part1, rnd_size);
+		offset_part1 += rnd_size;
 
-	memcpy(mpcPartyView.rnd_tape_seed, raw_data_ptr + offset, rnd_size);
-	offset += rnd_size;
+		uint32_t* input_size = (uint32_t*) (raw_data_part1_ptr + offset_part1);
+		offset_part1 += sizeof(uint32_t);
 
-	uint32_t* input_size = (uint32_t*) (raw_data_ptr + offset);
-	offset += sizeof(uint32_t);
+		uint8_t * input_ptr = (uint8_t*) (raw_data_part1_ptr + offset_part1);
+		mpcPartyView.input.assign(input_ptr, input_ptr + (*input_size));
+		offset_part1 += (*input_size) * sizeof(uint8_t);
+		assert(offset_part1 == mpcPartyView_part1_str.size());
+	}
 
-	uint32_t* output32_size = (uint32_t*) (raw_data_ptr + offset);
-	offset += sizeof(uint32_t);
+	// part 2
+	if (mpcPartyView_part2_str.length()>0) {
+		const char * raw_data_part2_ptr = &(mpcPartyView_part2_str.data()[0]);
+		uint32_t offset_part2 = 0;
 
-	uint32_t* output64_size = (uint32_t*) (raw_data_ptr + offset);
-	offset += sizeof(uint32_t);
+		uint32_t* output32_size = (uint32_t*) (raw_data_part2_ptr + offset_part2);
+		offset_part2 += sizeof(uint32_t);
 
-	uint8_t * input_ptr = (uint8_t*) (raw_data_ptr + offset);
-	mpcPartyView.input.assign(input_ptr, input_ptr + (*input_size));
-	offset += (*input_size) * sizeof(uint8_t);
+		uint32_t* output64_size = (uint32_t*) (raw_data_part2_ptr + offset_part2);
+		offset_part2 += sizeof(uint32_t);
 
-	uint32_t * output32_ptr = (uint32_t*) (raw_data_ptr + offset);
-	mpcPartyView.output32.assign(output32_ptr, output32_ptr+(*output32_size));
-	offset += (*output32_size) * sizeof(uint32_t);
 
-	uint64_t * output64_ptr = (uint64_t*) (raw_data_ptr + offset);
-	mpcPartyView.output64.assign(output64_ptr, output64_ptr+(*output64_size));
-	offset += (*output64_size) * sizeof(uint64_t);
+		uint32_t * output32_ptr = (uint32_t*) (raw_data_part2_ptr + offset_part2);
+		mpcPartyView.output32.assign(output32_ptr, output32_ptr+(*output32_size));
+		offset_part2 += (*output32_size) * sizeof(uint32_t);
 
-	assert(offset == mpcPartyView_str.size());
+		uint64_t * output64_ptr = (uint64_t*) (raw_data_part2_ptr + offset_part2);
+		mpcPartyView.output64.assign(output64_ptr, output64_ptr+(*output64_size));
+		offset_part2 += (*output64_size) * sizeof(uint64_t);
+
+		assert(offset_part2 == mpcPartyView_part2_str.size());
+	}
 
 	//dump_MpcPartyView(mpcPartyView);
 	return mpcPartyView;
@@ -782,6 +810,23 @@ std::vector<std::string> string_to_vectorstrings(const std::string &str){
 	return v;
 }
 
+
+// ROM
+void GenChallengeROM_from_single_proof(unsigned char hash[ZKBOO_HASH_BYTES] /*OUT*/,
+		const std::string &proof_commitment_full){
+	SHA256_CTX ctx;
+	SHA256_Init(&ctx);
+	SHA256_Update(&ctx, proof_commitment_full.data(), proof_commitment_full.size());
+	SHA256_Final(hash, &ctx);
+}
+
+
+
+// Opt.6 Not including full views.
+bool zkbpp_is_reconstruct_required(const MpcPartyContext* ctx[2]){
+	return ctx[0]->view.output32.size() != ctx[1]->view.output32.size()
+			|| ctx[0]->view.output64.size() != ctx[1]->view.output64.size();
+}
 
 
 template class MpcVariable<uint8_t>;

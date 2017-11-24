@@ -56,7 +56,7 @@ int main(){
 
 		MpcVariable<uint8_t> a;
 		//convert_input(a, a0, (const MpcPartyContext**) mpcCtx);
-		convert_input(a, a0, (const MpcPartyContext **) mpcCtx);
+		zkboo_convert_input(a, a0, (const MpcPartyContext **) mpcCtx);
 		MpcVariable<uint32_t> b(b0);
 		MpcVariable<uint32_t> res;
 		foo<MpcVariable<uint32_t> >(a, b, res);

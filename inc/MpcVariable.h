@@ -11,7 +11,7 @@
 #include "assert.h"
 #include "stdint.h"
 #include "string.h"
-#include "stdio.h"
+//#include "stdio.h"
 #include <iostream>
 #include <vector>
 
@@ -20,8 +20,10 @@
 
 #include "mpc_types.h"
 
+#define ZKBOO_RND_TAPE_SEED_LEN   16
+
 struct MpcPartyView{
-	unsigned char rnd_tape_seed[16]; // used for generating a random tape
+	unsigned char rnd_tape_seed[ZKBOO_RND_TAPE_SEED_LEN]; // used for generating a random tape
 	std::vector<uint8_t> input;
 	std::vector<uint32_t> output32; //filled in during the function execution in the mpc mode
 	std::vector<uint64_t> output64; //filled in during the function execution in the mpc mode
@@ -35,6 +37,7 @@ struct MpcPartyContext{
 	bool verify_mode;
 	unsigned int verifier_counter32; // counter for output view
 	unsigned int verifier_counter64; // counter for output view
+	//unsigned char commitment[ZKBOO_COMMITMENT_VIEW_LENGTH];
 };
 
 struct MpcProof{
@@ -45,12 +48,7 @@ void InitMpcContext(MpcPartyContext *ctx, int randomTapeBytes, bool verify_mode)
 
 void InitMpcContext(MpcPartyContext *ctx, const unsigned char keys[16], int randomTapeBytes, bool verify_mode);
 
-void CommitMpcContext(unsigned char h[SHA256_DIGEST_LENGTH] /*OUT*/, MpcPartyContext * mpcCtx /*IN*/);
-
-
-void GenChallengeROM_from_single_proof(unsigned char hash[SHA256_DIGEST_LENGTH] /*OUT*/,
-		const std::string &proof_commitment);
-
+void CommitMpcContext(unsigned char h[ZKBOO_COMMITMENT_VIEW_LENGTH] /*OUT*/, MpcPartyContext * mpcCtx /*IN*/);
 
 void extract_es_from_Challenge(int * es /*OUT*/,
 		const unsigned char hash[ZKBOO_HASH_BYTES] /*IN*/);
@@ -287,17 +285,28 @@ public:
 };
 
 
-// splits x to 3 random parts that XOR to the original value
-void generate_random(unsigned char data[], int length_bytes);
-void convert_input(MpcVariable<uint8_t>& x, const uint8_t &secret_input, const MpcPartyContext *context[3]);
+uint32_t nextRandom32_fromCtx(MpcPartyContext* ctx);
 
 
-std::string MpcPartyView_to_string(const MpcPartyView &mpcPartyView);
-MpcPartyView string_to_MpcPartyView(const std::string &mpcPartyView_str);
+//std::string MpcPartyView_to_string(const MpcPartyView &mpcPartyView);
+std::vector<std::string> MpcPartyView_to_string(const MpcPartyView &mpcPartyView);
+//MpcPartyView string_to_MpcPartyView(const std::string &mpcPartyView_str);
+MpcPartyView string_to_MpcPartyView(const std::string &mpcPartyView_part1_str, const std::string &mpcPartyView_part2_str);
 std::string vectorstrings_to_string(const std::vector<std::string> &vs);
 std::vector<std::string> string_to_vectorstrings(const std::string &str);
 
-int get_MpcPartyView_input_offset();
+
+// helper functions
+void GenChallengeROM_from_single_proof(unsigned char hash[ZKBOO_HASH_BYTES] /*OUT*/,
+		const std::string &proof_commitment_full);
+
+
+bool zkbpp_is_reconstruct_required(const MpcPartyContext* ctx[2]);
+
+void getAllRandomness(
+		const unsigned char key[16] /*IN*/,
+		std::vector<uint32_t> &randomness /*OUT*/ /*space should be pre-allocated*/,
+		int randomnessBits /*IN*/ /*expected to be multiple of 128*/);
 
 
 #endif /* INC_MPCVARIABLE_H_ */

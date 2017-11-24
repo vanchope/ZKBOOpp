@@ -9,6 +9,8 @@
 #define INC_MPC_TYPES_H_
 
 #include "stdint.h"
+#include "stdio.h"
+#include <string>
 
 //#define VERBOSE
 
@@ -17,9 +19,11 @@
 #define INCLUDE_ASSERTS
 
 
-#define ZKBOO_NUMBER_OF_ROUNDS    137 // 137 = ZKBoo constant to reduce soundness error till 2^-80 level.
+#define ZKBOO_NUMBER_OF_ROUNDS    2 // 137 = ZKBoo constant to reduce soundness error to 2^-80 level.
 
 #define ZKBOO_HASH_BYTES	32  // corresponds to 136 rounds
+
+#define ZKBOO_COMMITMENT_VIEW_LENGTH   SHA256_DIGEST_LENGTH   // used only for commitments to views
 
 // _rotr was already defined in global headers, therefore we use our own `implementation' here.
 // We avoid templates here just because we want to ensure that only primitive types like uint32_t can be instantiated within the code below.
@@ -91,6 +95,34 @@ INLINE void u64_to_u32_little(T32* out, const T64 &in){
 
 #define U32TO64_LITTLE(p)		u32_to_u64_little<T32, T64>(p)
 #define U64TO32_LITTLE(p, v)	u64_to_u32_little(p, v)
+
+
+// -----------------------------------------------------
+// some utilities used by zkboo/zkbpp
+// -----------------------------------------------------
+void dump_memory(const char * data, int len);
+
+std::string format_memory(const char * data, int len);
+
+template <typename T>
+void debug_func(const char * func_name,
+		const char * input, int len_bytes,
+		const char * inputpub, int inputpub_len_bytes,
+		const T * y, int len_output){
+	printf("%s('", func_name);
+	for(int i=0; i<len_bytes; i++){
+		printf("%c", input[i]);
+	}
+	printf("')=");
+	//TODO print also pub params
+	const char * out = (const char * ) y;
+	unsigned int output_bytes = len_output * sizeof(T);
+	dump_memory(out, output_bytes);
+	printf("\n");
+}
+
+void generate_random(unsigned char data[], int length_bytes);
+
 
 
 #endif /* INC_MPC_TYPES_H_ */

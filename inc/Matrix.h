@@ -52,7 +52,8 @@ public:
 	}
 	~Matrix3D(){ delete[] data; }
 	INLINE unsigned long int index(int x, int y, int z) const {return x * size23_ + y * size3_ + z;}
-	unsigned long int size_bytes(){ return size1_ * size23_ ; }
+	unsigned long int size_bytes(){ return size1_ * size23_ * sizeof(T); }
+	unsigned long int number_of_elements(){ return size1_ * size23_; }
 private:
 	unsigned long int size1_;
 	unsigned long int size2_;
