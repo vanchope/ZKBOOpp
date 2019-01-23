@@ -529,22 +529,22 @@ void getAllRandomness(
 	//Generate randomness: We use 365*32 bit of randomness per key.
 	//Since AES block size is 128 bit, we need to run 365*32/128 = 91.25 iterations. Let's just round up.
 
-	EVP_CIPHER_CTX ctx;
-	setupAES(&ctx, key);
+	EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
+	setupAES(ctx, key);
 	unsigned char *plaintext =
 			(unsigned char *)"0000000000000000";
 	int out_len;
 	uint32_t buf[4];
 	for(int j=0; j<randomnessBits/128; j++) {
 		//encrypt by blocks of 128 bits
-		if(1 != EVP_EncryptUpdate(&ctx, (unsigned char *)buf, &out_len,
+		if(1 != EVP_EncryptUpdate(ctx, (unsigned char *)buf, &out_len,
 					plaintext, strlen ((char *)plaintext)))
 			handleErrors();
 
 		for(int i=0; i<4; i++)
 			randomness.push_back(buf[i]);
 	}
-	EVP_CIPHER_CTX_cleanup(&ctx);
+	EVP_CIPHER_CTX_cleanup(ctx);
 }
 
 // generates random tape based on keys
